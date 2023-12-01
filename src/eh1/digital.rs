@@ -56,6 +56,9 @@ use embedded_hal::digital::{ErrorType, InputPin, OutputPin, StatefulOutputPin};
 
 use crate::{common::Generic, eh1::error::MockError};
 
+#[cfg(feature = "embedded-hal-async")]
+use std::time::Duration;
+
 /// MockPin transaction
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Transaction {
@@ -116,14 +119,14 @@ impl Transaction {
 
     /// Create a new wait_for_state transaction
     #[cfg(feature = "embedded-hal-async")]
-    pub fn wait_for_state(state: State) -> Transaction {
-        Transaction::new(TransactionKind::WaitForState(state))
+    pub fn wait_for_state(state: State, delay: Duration) -> Transaction {
+        Transaction::new(TransactionKind::WaitForState(state, delay))
     }
 
     /// Crate a new wait_for_edge transaction
     #[cfg(feature = "embedded-hal-async")]
-    pub fn wait_for_edge(edge: Edge) -> Transaction {
-        Transaction::new(TransactionKind::WaitForEdge(edge))
+    pub fn wait_for_edge(edge: Edge, delay: Duration) -> Transaction {
+        Transaction::new(TransactionKind::WaitForEdge(edge, delay))
     }
 
     /// Add an error return to a transaction
@@ -156,10 +159,10 @@ pub enum TransactionKind {
     GetState(State),
     /// Wait for the given pin state
     #[cfg(feature = "embedded-hal-async")]
-    WaitForState(State),
+    WaitForState(State, Duration),
     /// Wait for the given pin edge
     #[cfg(feature = "embedded-hal-async")]
-    WaitForEdge(Edge),
+    WaitForEdge(Edge, Duration),
 }
 
 impl TransactionKind {
@@ -319,14 +322,15 @@ impl embedded_hal_async::digital::Wait for Mock {
             .next()
             .expect("no expectation for pin::wait_for_high call");
 
-        assert!(
-            matches!(kind, TransactionKind::WaitForState(State::High)),
-            "got call to wait_for_high"
-        );
+        let delay = match kind {
+            TransactionKind::WaitForState(State::High, delay) => delay,
+            _ => panic!("got call to wait_for_high"),
+        };
 
         if let Some(e) = err {
             Err(e)
         } else {
+            tokio::time::sleep(delay).await;
             Ok(())
         }
     }
@@ -338,10 +342,11 @@ impl embedded_hal_async::digital::Wait for Mock {
         let Transaction { kind, err } =
             s.next().expect("no expectation for pin::wait_for_low call");
 
-        assert!(
-            matches!(kind, TransactionKind::WaitForState(State::Low)),
-            "got call to wait_for_low"
-        );
+        let delay = match kind {
+            TransactionKind::WaitForState(State::Low, delay) => delay,
+            _ => panic!("got call to wait_for_low"),
+        };
+        tokio::time::sleep(delay).await;
 
         if let Some(e) = err {
             Err(e)
@@ -358,10 +363,11 @@ impl embedded_hal_async::digital::Wait for Mock {
             .next()
             .expect("no expectation for pin::wait_for_rising_edge call");
 
-        assert!(
-            matches!(kind, TransactionKind::WaitForEdge(Edge::Rising)),
-            "got call to wait_for_rising_edge"
-        );
+        let delay = match kind {
+            TransactionKind::WaitForEdge(Edge::Rising, delay) => delay,
+            _ => panic!("got call to wait_for_rising_edge"),
+        };
+        tokio::time::sleep(delay).await;
 
         if let Some(e) = err {
             Err(e)
@@ -378,10 +384,11 @@ impl embedded_hal_async::digital::Wait for Mock {
             .next()
             .expect("no expectation for pin::wait_for_falling_edge call");
 
-        assert!(
-            matches!(kind, TransactionKind::WaitForEdge(Edge::Falling)),
-            "got call to wait_for_falling_edge"
-        );
+        let delay = match kind {
+            TransactionKind::WaitForEdge(Edge::Falling, delay) => delay,
+            _ => panic!("got call to wait_for_falling_edge"),
+        };
+        tokio::time::sleep(delay).await;
 
         if let Some(e) = err {
             Err(e)
@@ -398,10 +405,11 @@ impl embedded_hal_async::digital::Wait for Mock {
             .next()
             .expect("no expectation for pin::wait_for_any_edge call");
 
-        assert!(
-            matches!(kind, TransactionKind::WaitForEdge(Edge::Any)),
-            "got call to wait_for_any_edge"
-        );
+        let delay = match kind {
+            TransactionKind::WaitForEdge(Edge::Any, delay) => delay,
+            _ => panic!("got call to wait_for_any_edge"),
+        };
+        tokio::time::sleep(delay).await;
 
         if let Some(e) = err {
             Err(e)
@@ -496,10 +504,11 @@ mod test {
     async fn test_can_wait_for_state() {
         use embedded_hal_async::digital::Wait;
 
+        let delay = Duration::from_micros(1);
         let expectations = [
-            Transaction::new(TransactionKind::WaitForState(State::High)),
-            Transaction::new(TransactionKind::WaitForState(State::Low)),
-            Transaction::new(TransactionKind::WaitForState(State::High))
+            Transaction::new(TransactionKind::WaitForState(State::High, delay)),
+            Transaction::new(TransactionKind::WaitForState(State::Low, delay)),
+            Transaction::new(TransactionKind::WaitForState(State::High, delay))
                 .with_error(MockError::Io(ErrorKind::NotConnected)),
         ];
         let mut pin = Mock::new(&expectations);
@@ -520,7 +529,10 @@ mod test {
     async fn test_wait_for_wrong_state() {
         use embedded_hal_async::digital::Wait;
 
-        let expectations = [Transaction::wait_for_state(State::Low)];
+        let expectations = [Transaction::wait_for_state(
+            State::Low,
+            Duration::from_micros(1),
+        )];
         let mut pin = Mock::new(&expectations);
 
         pin.wait_for_high().await.unwrap();
@@ -533,11 +545,12 @@ mod test {
     async fn test_can_wait_for_edge() {
         use embedded_hal_async::digital::Wait;
 
+        let delay = Duration::from_micros(1);
         let expectations = [
-            Transaction::new(TransactionKind::WaitForEdge(Edge::Rising)),
-            Transaction::new(TransactionKind::WaitForEdge(Edge::Falling)),
-            Transaction::new(TransactionKind::WaitForEdge(Edge::Any)),
-            Transaction::new(TransactionKind::WaitForEdge(Edge::Rising))
+            Transaction::new(TransactionKind::WaitForEdge(Edge::Rising, delay)),
+            Transaction::new(TransactionKind::WaitForEdge(Edge::Falling, delay)),
+            Transaction::new(TransactionKind::WaitForEdge(Edge::Any, delay)),
+            Transaction::new(TransactionKind::WaitForEdge(Edge::Rising, delay))
                 .with_error(MockError::Io(ErrorKind::NotConnected)),
         ];
         let mut pin = Mock::new(&expectations);
@@ -559,10 +572,34 @@ mod test {
     async fn test_wait_for_wrong_edge() {
         use embedded_hal_async::digital::Wait;
 
-        let expectations = [Transaction::wait_for_edge(Edge::Falling)];
+        let expectations = [Transaction::wait_for_edge(
+            Edge::Falling,
+            Duration::from_micros(1),
+        )];
         let mut pin = Mock::new(&expectations);
 
         pin.wait_for_rising_edge().await.unwrap();
+
+        pin.done();
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "embedded-hal-async")]
+    async fn test_wait_timeout() {
+        use embedded_hal_async::digital::Wait;
+        use tokio::time::timeout;
+
+        let expectations = [Transaction::wait_for_edge(
+            Edge::Falling,
+            Duration::from_millis(10),
+        )];
+        let mut pin = Mock::new(&expectations);
+
+        assert!(
+            timeout(Duration::from_millis(5), pin.wait_for_falling_edge())
+                .await
+                .is_err()
+        );
 
         pin.done();
     }
